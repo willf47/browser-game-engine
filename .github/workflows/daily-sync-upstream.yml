@@ -1,0 +1,54 @@
+name: Daily sync from upstream
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Mirror upstream main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Synchronize main and preserve this workflow
+        shell: bash
+        env:
+          UPSTREAM_REPOSITORY: vinilana/browser-game-engine
+        run: |
+          set -euo pipefail
+
+          workflow_path=".github/workflows/daily-sync-upstream.yml"
+          backup_file="$(mktemp)"
+          previous_head="$(git rev-parse HEAD)"
+
+          cp "$workflow_path" "$backup_file"
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch --no-tags upstream "+refs/heads/main:refs/remotes/upstream/main"
+          git reset --hard refs/remotes/upstream/main
+
+          mkdir -p "$(dirname "$workflow_path")"
+          cp "$backup_file" "$workflow_path"
+          git add -- "$workflow_path"
+
+          if git diff --quiet "$previous_head" --; then
+            echo "Fork main is already synchronized with upstream main."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: sync main with upstream"
+          git push --force-with-lease="refs/heads/main:$previous_head" origin HEAD:refs/heads/main
